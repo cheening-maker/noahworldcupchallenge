@@ -71,7 +71,11 @@
     background:repeating-linear-gradient(90deg,rgba(255,255,255,.12) 0 6px,transparent 6px 12px),repeating-linear-gradient(0deg,rgba(255,255,255,.12) 0 6px,transparent 6px 12px)}
   .box{position:absolute;top:3%;left:50%;transform:translateX(-50%);width:56%;height:33%;border:3px solid rgba(255,255,255,.5);border-top:none;border-radius:0 0 14px 14px}
   .keeper{position:absolute;top:6.5%;left:50%;width:42px;height:42px;margin-left:-21px;z-index:4;transition:left .5s cubic-bezier(.3,1.2,.5,1)}
-  .shooter{position:absolute;bottom:6%;width:18%;display:flex;flex-direction:column;align-items:center;gap:4px;z-index:3}
+  .shooter{position:absolute;bottom:6%;width:18%;display:flex;flex-direction:column;align-items:center;gap:4px;z-index:3;transition:left .8s ease-in-out, top .8s ease-in-out}
+  .shooter.running .fig{animation:run .38s ease-in-out infinite}
+  @keyframes run{0%{transform:translateY(0) rotate(-5deg)}50%{transform:translateY(-5px) rotate(5deg)}100%{transform:translateY(0) rotate(-5deg)}}
+  .ball.steal{animation:stealpulse .32s}
+  @keyframes stealpulse{0%{filter:none}45%{filter:drop-shadow(0 0 11px var(--win)) brightness(1.5)}100%{filter:none}}
   .shooter .fig{width:72px;height:auto;animation:bob 2.2s ease-in-out infinite}
   @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
   .shooter.kicking .fig{animation:none;transform:rotate(-12deg) translateY(-4px)}
@@ -459,35 +463,57 @@ async function animateKick(scorer){
   // hide the 4 resting balls, use one match ball
   for(let i=0;i<4;i++){const b=$('ball'+i);if(b)b.style.opacity='0';}
   const mb=ensureMatchBall();mb.classList.remove('hot');mb.style.opacity='1';mb.style.transition='none';
-  let cur=(Math.random()*4)|0;mb.style.top='78%';mb.style.left=xs[cur]+'%';mb.style.transform='scale(.92)';void mb.offsetWidth;
-  whistle();setBanner('开球!',true);$('hPhaseHint').textContent='比赛进行中…球在脚下倒来倒去';
 
-  // ---- 场上传导 build-up（约 5.5–8 秒）----
-  const lines=['中场倒脚…','后场组织…','分边!','一脚出球…','二过一!','回做…','突破上抢!','节奏起来了…','再倒一脚…','寻找空当…','长传转移!','逼抢中…'];
-  const buildMs=5500+Math.random()*2500;const t0=performance.now();let hop=0;
+  // ---- 球员散开到场上,开始奔跑 ----
+  let C=[];for(let i=0;i<4;i++){const s=randSpot();C[i]=s;moveShooter(i,s.x,s.y,500);$('sh'+i)?.classList.add('running');}
+  let owner=(Math.random()*4)|0;
+  mb.style.left=C[owner].x+'%';mb.style.top=(C[owner].y+6)+'%';mb.style.transform='scale(.9)';void mb.offsetWidth;
+  whistle();setBanner('开球!',true);$('hPhaseHint').textContent='球员在场上奔跑拼抢…';
+  await sleep(520);
+
+  const runLines=['带球推进!','边路狂奔!','长途奔袭…','左右穿插…','快速反击!','护住球…'];
+  const stealLines=['抢断!','被断了!','拦截成功!','断球!','一脚捅走!','抢到了!'];
+  const buildMs=4500+Math.random()*2000;const t0=performance.now();
   while(performance.now()-t0<buildMs){
-    let nx,ny;
-    if(Math.random()<0.35){ nx=20+Math.random()*60; ny=44+Math.random()*14; } // 推进到中场
-    else{ let nxt;do{nxt=(Math.random()*4)|0;}while(nxt===cur);cur=nxt; nx=xs[cur]+(Math.random()*8-4); ny=72+Math.random()*9;
-      const sh=$('sh'+cur);if(sh){sh.classList.add('kicking');setTimeout(()=>sh.classList.remove('kicking'),240);} }
-    const dur=480+Math.random()*260;
-    moveBall(mb,nx,ny,dur,200+Math.random()*200);
-    if(hop%2===0)setBannerText(lines[(Math.random()*lines.length)|0],true);
-    hop++; await sleep(dur+30);
+    // 控球者带球跑,其他人满场跑动
+    for(let i=0;i<4;i++){const s=randSpot();C[i]=s;moveShooter(i,s.x,s.y,820);}
+    moveBall(mb,C[owner].x,C[owner].y+6,820,260);
+    setBannerText(runLines[(Math.random()*runLines.length)|0],true);
+    await sleep(840);
+    if(performance.now()-t0>=buildMs)break;
+    // 抢断:抢球者扑向球的位置
+    let s;do{s=(Math.random()*4)|0;}while(s===owner);
+    const near={x:Math.min(88,Math.max(12,C[owner].x+(Math.random()*10-5))),y:Math.min(72,Math.max(36,C[owner].y+(Math.random()*8-4)))};
+    C[s]=near;moveShooter(s,near.x,near.y,520);
+    for(let i=0;i<4;i++){if(i!==s&&i!==owner){const r=randSpot();C[i]=r;moveShooter(i,r.x,r.y,520);}}
+    await sleep(540);
+    owner=s;moveBall(mb,C[owner].x,C[owner].y+6,240,120);flashSteal(mb);blip();
+    setBannerText(teamObjs(HCFG)[owner].name+' '+stealLines[(Math.random()*stealLines.length)|0],true);
+    await sleep(320);
   }
 
-  // ---- 交给进球者,起脚 ----
-  setBannerText('交给了'+(teamObjs(HCFG)[scorer].name)+'…',true);
-  moveBall(mb,xs[scorer],78,400,180); await sleep(430);
-  const sh=$('sh'+scorer);sh.classList.add('windup');setBanner('射门准备…',true); await sleep(700);
+  // ---- 最后抢到球的若不是进球者,让进球者断下来 ----
+  if(owner!==scorer){
+    const near={x:C[owner].x,y:C[owner].y};C[scorer]=near;moveShooter(scorer,near.x,near.y,440);await sleep(460);
+    owner=scorer;moveBall(mb,C[scorer].x,C[scorer].y+6,220,120);flashSteal(mb);blip();
+    setBannerText(teamObjs(HCFG)[scorer].name+' 抢到球!',true);await sleep(360);
+  }
+
+  // ---- 进球者带球杀到门前,起脚 ----
+  for(let i=0;i<4;i++)$('sh'+i)?.classList.remove('running');
+  const sh=$('sh'+scorer);
+  C[scorer]={x:50,y:62};moveShooter(scorer,50,62,520);moveBall(mb,50,68,520,220);
+  for(let i=0;i<4;i++){if(i!==scorer){const r={x:(i<2?20:80)+(Math.random()*8-4),y:50+Math.random()*16};moveShooter(i,r.x,r.y,520);}}
+  await sleep(560);
+  sh.classList.add('windup');setBanner('射门准备…',true);await sleep(680);
   sh.classList.remove('windup');sh.classList.add('kicking');setBanner('射门!',true);whistle();
   $('keeper').style.left=(scorer<2?72:28)+'%';
-  moveBall(mb,50,42,720,420); await sleep(740);
-  clearBanner(); moveBall(mb,50,19,640,360);mb.classList.add('hot'); await sleep(660);
+  moveBall(mb,50,42,720,420);await sleep(740);
+  clearBanner();moveBall(mb,50,19,640,360);mb.classList.add('hot');await sleep(660);
   // ---- 临门屏息 ----
   $('hPhaseHint').textContent='就是现在……';
-  setBanner('⚡',false); await sleep(420);
-  moveBall(mb,50,6.5,520,360); await sleep(540);
+  setBanner('⚡',false);await sleep(430);
+  moveBall(mb,50,6.5,520,360);await sleep(540);
 
   // ---- 破门! ----
   sh.classList.add('scorer','celebrate');
@@ -499,11 +525,16 @@ async function animateKick(scorer){
 
   // ---- 结算 ----
   clearBanner();pitch.classList.remove('shake');
-  for(let i=0;i<4;i++)$('sh'+i)?.classList.remove('kicking','celebrate','windup');
   mb.classList.remove('hot');mb.style.opacity='0';
   for(let i=0;i<4;i++){const b=$('ball'+i);if(b)b.style.opacity='';}
-  hostResolveAfterKick(scorer); resetBalls();
+  resetShooters();
+  hostResolveAfterKick(scorer);resetBalls();
 }
+function randSpot(){return {x:12+Math.random()*76, y:36+Math.random()*34};}
+function moveShooter(i,cx,cy,dur){const sh=$('sh'+i);if(!sh)return;sh.style.transition=`left ${dur}ms ease-in-out, top ${dur}ms ease-in-out`;sh.style.bottom='auto';requestAnimationFrame(()=>{sh.style.left=(cx-9)+'%';sh.style.top=cy+'%';});}
+function resetShooters(){const xs=[10,36.5,63,89.5];for(let i=0;i<4;i++){const sh=$('sh'+i);if(!sh)continue;sh.style.transition='left .5s ease, top .5s ease';sh.style.top='';sh.style.bottom='';sh.style.left=(xs[i]-9)+'%';sh.classList.remove('running','kicking','windup','celebrate','scorer');}}
+function flashSteal(mb){mb.classList.remove('steal');void mb.offsetWidth;mb.classList.add('steal');}
+function blip(){try{const c=AC(),t=c.currentTime;const o=c.createOscillator(),g=c.createGain();o.type='square';o.frequency.value=680;g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(.07,t+.01);g.gain.exponentialRampToValueAtTime(.0001,t+.09);o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+.1);}catch(e){}}
 function resetBalls(){const xs=[10,36.5,63,89.5];for(let i=0;i<4;i++){const b=$('ball'+i);if(!b)continue;b.style.transition='none';b.style.top='80%';b.style.left=xs[i]+'%';b.style.transform='none';requestAnimationFrame(()=>b.style.transition='');$('sh'+i)?.classList.remove('scorer');}$('keeper').style.left='50%';}
 
 /* ===================== PLAYER ===================== */
