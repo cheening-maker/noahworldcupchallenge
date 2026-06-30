@@ -445,55 +445,64 @@ function renderHostLocked(){const ps=hostPlayers;$('hLocked').innerHTML=Object.e
 function renderHostWinners(){renderHChips();const ws=Object.values(hostWinners);$('hWinners').innerHTML=ws.map(w=>`<div class="wcard"><div class="l">${w.medal} ${w.label}</div><div class="n">${esc(w.name)}</div><div class="a">RM ${w.amount}</div></div>`).join('');}
 
 let kicked=false;
+const BALL_SVG='<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#fff" stroke="#222"/><path d="M12 5 l4 3 -1.5 5 h-5 L8 8Z" fill="#222"/></svg>';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function setBanner(text,small){const b=$('banner');$('bannerText').textContent=text;b.classList.toggle('small',!!small);b.classList.remove('show');void b.offsetWidth;b.classList.add('show');}
+function setBannerText(text,small){const b=$('banner');$('bannerText').textContent=text;b.classList.toggle('small',!!small);if(!b.classList.contains('show'))b.classList.add('show');}
 function clearBanner(){$('banner').classList.remove('show');}
-function animateKick(scorer){
+function ensureMatchBall(){let mb=$('matchball');if(!mb){mb=document.createElement('div');mb.className='ball';mb.id='matchball';mb.innerHTML=BALL_SVG;mb._rot=0;$('pitch').appendChild(mb);}return mb;}
+function moveBall(mb,left,top,dur,spin){mb._rot=(mb._rot||0)+(spin==null?360:spin);mb.style.transition=`top ${dur}ms cubic-bezier(.3,.55,.35,1), left ${dur}ms cubic-bezier(.3,.55,.35,1), transform ${dur}ms linear`;requestAnimationFrame(()=>{mb.style.top=top+'%';mb.style.left=left+'%';mb.style.transform=`scale(${top<30?0.7:0.92}) rotate(${mb._rot}deg)`;});}
+
+async function animateKick(scorer){
   if(kicked===hostRound.index)return; kicked=hostRound.index;
-  const pitch=$('pitch');
-  // ---- 0.0s 蓄力,全场屏息 ----
-  whistle();
-  for(let i=0;i<4;i++){const sh=$('sh'+i);if(sh){sh.classList.remove('scorer','celebrate','kicking');sh.classList.add('windup');}}
-  setBanner('准备…',true);
-  $('hPhaseHint').textContent='全场屏息,谁会破门?';
-  // ---- 0.75s 起脚射门 ----
-  setTimeout(()=>{
-    setBanner('射门!',true); whistle();
-    for(let i=0;i<4;i++){const sh=$('sh'+i);if(sh){sh.classList.remove('windup');sh.classList.add('kicking');}}
-    for(let i=0;i<4;i++){const ball=$('ball'+i);if(!ball)continue;const fi=i;
-      ball.style.transition='top .95s cubic-bezier(.18,.7,.32,1), left .95s ease-out, transform .95s linear';
-      requestAnimationFrame(()=>{ball.style.top='42%';ball.style.left=(fi===scorer?'50%':(fi<2?'36%':'64%'));ball.style.transform='scale(.82) rotate(360deg)';});}
-  },750);
-  // ---- 1.75s 逼近球门,门将扑救(故意扑反方向制造悬念) ----
-  setTimeout(()=>{
-    clearBanner();
-    for(let i=0;i<4;i++){const ball=$('ball'+i);if(!ball)continue;const fi=i;
-      ball.style.transition='top .75s ease-in, left .75s ease-out, transform .75s linear';
-      requestAnimationFrame(()=>{ if(fi===scorer){ball.style.top='19%';ball.style.left='50%';ball.style.transform='scale(.72) rotate(560deg)';}
-        else{ball.style.top='13%';ball.style.left=(fi<2?'21%':'79%');ball.style.transform='scale(.58) rotate(500deg)';}});}
-    $('keeper').style.left=(scorer<2?72:28)+'%';
-    $('hPhaseHint').textContent='球来了…';
-  },1750);
-  // ---- 2.7s 临门一脚前的短暂屏息,然后缓缓入网 ----
-  setTimeout(()=>{
-    const ball=$('ball'+scorer);if(ball){ball.classList.add('hot');
-      ball.style.transition='top .55s cubic-bezier(.55,0,.45,1), transform .55s linear';
-      requestAnimationFrame(()=>{ball.style.top='6.5%';ball.style.transform='scale(.66) rotate(760deg)';});}
-  },2700);
-  // ---- 3.25s 破门!球网震动 + 球场抖动 + 球员庆祝 ----
-  setTimeout(()=>{
-    $('sh'+scorer).classList.add('scorer','celebrate');
-    const goalEl=pitch.querySelector('.goal');if(goalEl){goalEl.classList.remove('ripple');void goalEl.offsetWidth;goalEl.classList.add('ripple');}
-    pitch.classList.remove('shake');void pitch.offsetWidth;pitch.classList.add('shake');
-    setBanner('GOAL! ⚽',false); cheer(); burst();
-    const t=teamObjs(HCFG)[scorer];$('hPhaseHint').textContent=`${t.name} 破门!结算中…`;
-  },3250);
-  // ---- 4.5s 结算 ----
-  setTimeout(()=>{
-    clearBanner(); pitch.classList.remove('shake');
-    for(let i=0;i<4;i++)$('sh'+i)?.classList.remove('kicking','celebrate','windup');
-    $('ball'+scorer)?.classList.remove('hot');
-    hostResolveAfterKick(scorer); resetBalls();
-  },4500);
+  const pitch=$('pitch'),xs=[10,36.5,63,89.5];
+  // hide the 4 resting balls, use one match ball
+  for(let i=0;i<4;i++){const b=$('ball'+i);if(b)b.style.opacity='0';}
+  const mb=ensureMatchBall();mb.classList.remove('hot');mb.style.opacity='1';mb.style.transition='none';
+  let cur=(Math.random()*4)|0;mb.style.top='78%';mb.style.left=xs[cur]+'%';mb.style.transform='scale(.92)';void mb.offsetWidth;
+  whistle();setBanner('开球!',true);$('hPhaseHint').textContent='比赛进行中…球在脚下倒来倒去';
+
+  // ---- 场上传导 build-up（约 5.5–8 秒）----
+  const lines=['中场倒脚…','后场组织…','分边!','一脚出球…','二过一!','回做…','突破上抢!','节奏起来了…','再倒一脚…','寻找空当…','长传转移!','逼抢中…'];
+  const buildMs=5500+Math.random()*2500;const t0=performance.now();let hop=0;
+  while(performance.now()-t0<buildMs){
+    let nx,ny;
+    if(Math.random()<0.35){ nx=20+Math.random()*60; ny=44+Math.random()*14; } // 推进到中场
+    else{ let nxt;do{nxt=(Math.random()*4)|0;}while(nxt===cur);cur=nxt; nx=xs[cur]+(Math.random()*8-4); ny=72+Math.random()*9;
+      const sh=$('sh'+cur);if(sh){sh.classList.add('kicking');setTimeout(()=>sh.classList.remove('kicking'),240);} }
+    const dur=480+Math.random()*260;
+    moveBall(mb,nx,ny,dur,200+Math.random()*200);
+    if(hop%2===0)setBannerText(lines[(Math.random()*lines.length)|0],true);
+    hop++; await sleep(dur+30);
+  }
+
+  // ---- 交给进球者,起脚 ----
+  setBannerText('交给了'+(teamObjs(HCFG)[scorer].name)+'…',true);
+  moveBall(mb,xs[scorer],78,400,180); await sleep(430);
+  const sh=$('sh'+scorer);sh.classList.add('windup');setBanner('射门准备…',true); await sleep(700);
+  sh.classList.remove('windup');sh.classList.add('kicking');setBanner('射门!',true);whistle();
+  $('keeper').style.left=(scorer<2?72:28)+'%';
+  moveBall(mb,50,42,720,420); await sleep(740);
+  clearBanner(); moveBall(mb,50,19,640,360);mb.classList.add('hot'); await sleep(660);
+  // ---- 临门屏息 ----
+  $('hPhaseHint').textContent='就是现在……';
+  setBanner('⚡',false); await sleep(420);
+  moveBall(mb,50,6.5,520,360); await sleep(540);
+
+  // ---- 破门! ----
+  sh.classList.add('scorer','celebrate');
+  const goalEl=pitch.querySelector('.goal');if(goalEl){goalEl.classList.remove('ripple');void goalEl.offsetWidth;goalEl.classList.add('ripple');}
+  pitch.classList.remove('shake');void pitch.offsetWidth;pitch.classList.add('shake');
+  setBanner('GOAL! ⚽',false);cheer();burst();
+  $('hPhaseHint').textContent=`${teamObjs(HCFG)[scorer].name} 破门!结算中…`;
+  await sleep(1400);
+
+  // ---- 结算 ----
+  clearBanner();pitch.classList.remove('shake');
+  for(let i=0;i<4;i++)$('sh'+i)?.classList.remove('kicking','celebrate','windup');
+  mb.classList.remove('hot');mb.style.opacity='0';
+  for(let i=0;i<4;i++){const b=$('ball'+i);if(b)b.style.opacity='';}
+  hostResolveAfterKick(scorer); resetBalls();
 }
 function resetBalls(){const xs=[10,36.5,63,89.5];for(let i=0;i<4;i++){const b=$('ball'+i);if(!b)continue;b.style.transition='none';b.style.top='80%';b.style.left=xs[i]+'%';b.style.transform='none';requestAnimationFrame(()=>b.style.transition='');$('sh'+i)?.classList.remove('scorer');}$('keeper').style.left='50%';}
 
